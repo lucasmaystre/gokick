@@ -1,4 +1,4 @@
-package kernels
+package kern
 
 import (
 	"c4science.ch/source/gokick/utils"
@@ -12,17 +12,17 @@ type Add struct {
 
 func NewAdd(first, second Kernel) *Add {
 	parts := make([]Kernel, 0, 2)
-	switch p := first.(type) {
+	switch first := first.(type) {
 	case *Add:
-		parts = append(parts, p.parts...)
+		parts = append(parts, first.parts...)
 	default:
-		parts = append(parts, p)
+		parts = append(parts, first)
 	}
-	switch p := second.(type) {
+	switch second := second.(type) {
 	case *Add:
-		parts = append(parts, p.parts...)
+		parts = append(parts, second.parts...)
 	default:
-		parts = append(parts, p)
+		parts = append(parts, second)
 	}
 	order := 0
 	for _, part := range parts {

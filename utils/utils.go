@@ -2,6 +2,7 @@ package utils
 
 import (
 	"gonum.org/v1/gonum/mat"
+	"math"
 )
 
 // Concatenate multiple vectors.
@@ -39,4 +40,15 @@ func Eye(n int) *mat.Dense {
 		out.Set(i, i, 1)
 	}
 	return out
+}
+
+// Normal probability density function.
+func NormalPdf(x float64) float64 {
+	return math.Exp(-x*x/2.0) / (math.Sqrt2 * math.SqrtPi)
+}
+
+// Normal cumulative density function.
+func NormalCdf(x float64) float64 {
+	// If X ~ N(0,1), returns P(X < x).
+	return math.Erfc(-x/math.Sqrt2) / 2.0
 }

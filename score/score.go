@@ -1,7 +1,7 @@
-package fitters
+package score
 
 import (
-	"c4science.ch/source/gokick/kernels"
+	"c4science.ch/source/gokick/kern"
 	"c4science.ch/source/gokick/utils"
 	"errors"
 	"gonum.org/v1/gonum/mat"
@@ -9,8 +9,30 @@ import (
 
 var ErrNotChronological = errors.New("observation not in chronological order")
 
-type Recursive struct {
-	kernel kernels.Kernel
+type Sample struct {
+	process *Process
+	idx     int
+}
+
+func (s *Sample) CavityParams() (xCav, nCav float64) {
+	xTot := 1.0 / s.process.Vs[s.idx]
+	nTot := xTot * s.process.Ms[s.idx]
+	xCav = xTot - s.process.Xs[s.idx]
+	nCav = nTot - s.process.Ns[s.idx]
+	return
+}
+
+func (s *Sample) PseudoObsParams() (float64, float64) {
+	return s.process.Xs[s.idx], s.process.Ns[s.idx]
+}
+
+func (s *Sample) UpdatePseudoObs(x, n, damping float64) {
+	s.process.Xs[s.idx] = (1-damping)*s.process.Xs[s.idx] + damping*x
+	s.process.Ns[s.idx] = (1-damping)*s.process.Ns[s.idx] + damping*n
+}
+
+type Process struct {
+	kernel kern.Kernel
 	Ts     []float64
 	Ms     []float64
 	Vs     []float64
@@ -28,8 +50,8 @@ type Recursive struct {
 	_P_s   []*mat.Dense
 }
 
-func NewRecursive(kernel kernels.Kernel) *Recursive {
-	return &Recursive{
+func NewProcess(kernel kern.Kernel) *Process {
+	return &Process{
 		kernel: kernel,
 		Ts:     make([]float64, 0, 10),
 		Ms:     make([]float64, 0, 10),
@@ -49,56 +71,60 @@ func NewRecursive(kernel kernels.Kernel) *Recursive {
 	}
 }
 
-func (f *Recursive) AddSample(t, n, x float64) {
-	idx := len(f.Ts)
-	if idx > 0 && t < f.Ts[idx-1] {
+func (p *Process) AddSample(time float64) *Sample {
+	idx := len(p.Ts)
+	if idx > 0 && time < p.Ts[idx-1] {
 		panic(ErrNotChronological)
 	}
-	f.Ts = append(f.Ts, t)
-	f.Ms = append(f.Ms, 0.0)
-	f.Vs = append(f.Vs, 0.0)
-	f.Ns = append(f.Ns, n)
-	f.Xs = append(f.Xs, x)
-	m := f.kernel.Order()
-	f._m_p = append(f._m_p, mat.NewVecDense(m, nil))
-	f._P_p = append(f._P_p, mat.NewDense(m, m, nil))
-	f._m_f = append(f._m_f, mat.NewVecDense(m, nil))
-	f._P_f = append(f._P_f, mat.NewDense(m, m, nil))
-	f._m_s = append(f._m_s, mat.NewVecDense(m, nil))
-	f._P_s = append(f._P_s, mat.NewDense(m, m, nil))
+	p.Ts = append(p.Ts, time)
+	p.Ns = append(p.Ns, 0.0)
+	p.Xs = append(p.Xs, 0.0)
+	p._m_p = append(p._m_p, p.kernel.StateMean(time))
+	p._P_p = append(p._P_p, p.kernel.StateCov(time))
+	p._m_f = append(p._m_f, p.kernel.StateMean(time))
+	p._P_f = append(p._P_f, p.kernel.StateCov(time))
+	p._m_s = append(p._m_s, p.kernel.StateMean(time))
+	p._P_s = append(p._P_s, p.kernel.StateCov(time))
+	// Initialize mean and variance.
+	h := p.kernel.MeasurementVec()
+	var tmp mat.VecDense
+	tmp.MulVec(p.kernel.StateCov(time).T(), h)
+	p.Ms = append(p.Ms, mat.Dot(h, p.kernel.StateMean(time)))
+	p.Vs = append(p.Vs, mat.Dot(&tmp, h))
 	if idx > 0 {
-		delta := t - f.Ts[idx-1]
-		f._A = append(f._A, f.kernel.Transition(delta))
-		f._Q = append(f._Q, f.kernel.NoiseCov(delta))
+		delta := time - p.Ts[idx-1]
+		p._A = append(p._A, p.kernel.Transition(delta))
+		p._Q = append(p._Q, p.kernel.NoiseCov(delta))
+	}
+	return &Sample{
+		process: p,
+		idx:     idx,
 	}
 }
 
-func (f *Recursive) Fit() {
+func (p *Process) Fit() {
 	var (
-		ts  = f.Ts
-		ms  = f.Ms
-		vs  = f.Vs
-		ns  = f.Ns
-		xs  = f.Xs
-		h   = f._h
-		I   = f._I
-		A   = f._A
-		Q   = f._Q
-		m_p = f._m_p
-		P_p = f._P_p
-		m_f = f._m_f
-		P_f = f._P_f
-		m_s = f._m_s
-		P_s = f._P_s
+		ts  = p.Ts
+		ms  = p.Ms
+		vs  = p.Vs
+		ns  = p.Ns
+		xs  = p.Xs
+		h   = p._h
+		I   = p._I
+		A   = p._A
+		Q   = p._Q
+		m_p = p._m_p
+		P_p = p._P_p
+		m_f = p._m_f
+		P_f = p._P_f
+		m_s = p._m_s
+		P_s = p._P_s
 	)
 	var k, tmp1 mat.VecDense
 	var Z, G, tmp2 mat.Dense
 	// Forward pass (Kalman filter).
-	for i := 0; i < len(f.Ts); i++ {
-		if i == 0 {
-			m_p[i] = f.kernel.StateMean(ts[i])
-			P_p[i] = f.kernel.StateCov(ts[i])
-		} else {
+	for i := 0; i < len(ts); i++ {
+		if i > 0 {
 			m_p[i].MulVec(A[i-1], m_f[i-1])
 			P_p[i].Product(A[i-1], P_f[i-1], A[i-1].T())
 			P_p[i].Add(P_p[i], Q[i-1])
@@ -119,8 +145,8 @@ func (f *Recursive) Fit() {
 		P_f[i].Add(P_f[i], &tmp2)
 	}
 	// Backward pass (RTS smoother).
-	for i := len(f.Ts) - 1; i >= 0; i-- {
-		if i == len(f.Ts)-1 {
+	for i := len(ts) - 1; i >= 0; i-- {
+		if i == len(ts)-1 {
 			m_s[i] = m_f[i]
 			P_s[i] = P_f[i]
 		} else {
@@ -142,6 +168,6 @@ func (f *Recursive) Fit() {
 	}
 }
 
-func (f *Recursive) Predict(ts []float64) (ms, vs []float64) {
+func (p *Process) Predict(ts []float64) (ms, vs []float64) {
 	return
 }
