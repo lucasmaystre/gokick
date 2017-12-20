@@ -20,40 +20,14 @@ type baseModel struct {
 }
 
 func (m *baseModel) Fit(damping float64, nWorkers, maxIter int, verbose bool) {
-	obsChan := make(chan obs.Observation, 100)
-	defer close(obsChan)
-	diff := make(chan float64, len(m.observations))
-	itemChan := make(chan *Item, 100)
-	defer close(itemChan)
-	done := make(chan bool, len(m.items))
-
-	for i := 0; i < nWorkers; i++ {
-		go func() {
-			for o := range obsChan {
-				diff <- o.UpdateApprox(damping)
-			}
-		}()
-		go func() {
-			for item := range itemChan {
-				item.Fit()
-				done <- true
-			}
-		}()
-	}
-
 	for i := 0; i < maxIter; i++ {
 		max := 0.0
 		for _, o := range m.observations {
-			obsChan <- o
-		}
-		for i := 0; i < len(m.observations); i++ {
-			max = math.Max(max, math.Abs(<-diff))
+			diff := o.UpdateApprox(damping)
+			max = math.Max(max, math.Abs(diff))
 		}
 		for _, item := range m.items {
-			itemChan <- item
-		}
-		for i := 0; i < len(m.items); i++ {
-			<-done
+			item.Fit()
 		}
 		if verbose {
 			fmt.Printf("Iteration %v, max diff: %.8f\n", i+1, max)
