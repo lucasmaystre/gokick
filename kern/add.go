@@ -2,7 +2,12 @@ package kern
 
 import (
 	"c4science.ch/source/gokick/utils"
-	"gonum.org/v1/gonum/mat"
+	"gonum.org/v1/gonum/blas/blas64"
+)
+
+var (
+	add *Add
+	_   Kernel = add // Check that Add respects the Kernel interface.
 )
 
 type Add struct {
@@ -38,66 +43,42 @@ func (k *Add) Order() int {
 	return k.order
 }
 
-func (k *Add) StateMean(t float64) *mat.VecDense {
-	vecs := make([]*mat.VecDense, len(k.parts))
+func (k *Add) StateMean(t float64) blas64.Vector {
+	vecs := make([]blas64.Vector, len(k.parts))
 	for i, part := range k.parts {
 		vecs[i] = part.StateMean(t)
 	}
 	return utils.ConcatVecs(k.order, vecs...)
 }
 
-func (k *Add) StateCov(t float64) *mat.Dense {
-	mats := make([]mat.Matrix, len(k.parts))
+func (k *Add) StateCov(t float64) blas64.Symmetric {
+	mats := make([]blas64.Symmetric, len(k.parts))
 	for i, part := range k.parts {
 		mats[i] = part.StateCov(t)
 	}
-	return utils.BlockDiag(k.order, mats...)
+	return utils.BlockDiagSym(k.order, mats...)
 }
 
-func (k *Add) MeasurementVec() *mat.VecDense {
-	vecs := make([]*mat.VecDense, len(k.parts))
+func (k *Add) MeasurementVec() blas64.Vector {
+	vecs := make([]blas64.Vector, len(k.parts))
 	for i, part := range k.parts {
 		vecs[i] = part.MeasurementVec()
 	}
 	return utils.ConcatVecs(k.order, vecs...)
 }
 
-func (k *Add) Feedback() *mat.Dense {
-	mats := make([]mat.Matrix, len(k.parts))
-	for i, part := range k.parts {
-		mats[i] = part.Feedback()
-	}
-	return utils.BlockDiag(k.order, mats...)
-}
-
-func (k *Add) NoiseEffect() *mat.Dense {
-	mats := make([]mat.Matrix, len(k.parts))
-	for i, part := range k.parts {
-		mats[i] = part.NoiseEffect()
-	}
-	return utils.BlockDiag(k.order, mats...)
-}
-
-func (k *Add) NoiseDensity() *mat.Dense {
-	mats := make([]mat.Matrix, len(k.parts))
-	for i, part := range k.parts {
-		mats[i] = part.NoiseDensity()
-	}
-	return utils.BlockDiag(k.order, mats...)
-}
-
-func (k *Add) Transition(delta float64) *mat.Dense {
-	mats := make([]mat.Matrix, len(k.parts))
+func (k *Add) Transition(delta float64) blas64.General {
+	mats := make([]blas64.General, len(k.parts))
 	for i, part := range k.parts {
 		mats[i] = part.Transition(delta)
 	}
-	return utils.BlockDiag(k.order, mats...)
+	return utils.BlockDiagGen(k.order, mats...)
 }
 
-func (k *Add) NoiseCov(delta float64) *mat.Dense {
-	mats := make([]mat.Matrix, len(k.parts))
+func (k *Add) NoiseCov(delta float64) blas64.Symmetric {
+	mats := make([]blas64.Symmetric, len(k.parts))
 	for i, part := range k.parts {
 		mats[i] = part.NoiseCov(delta)
 	}
-	return utils.BlockDiag(k.order, mats...)
+	return utils.BlockDiagSym(k.order, mats...)
 }

@@ -1,7 +1,13 @@
 package kern
 
 import (
-	"gonum.org/v1/gonum/mat"
+	"gonum.org/v1/gonum/blas"
+	"gonum.org/v1/gonum/blas/blas64"
+)
+
+var (
+	constant *Constant
+	_        Kernel = constant // Check that Constant respects the Kernel interface.
 )
 
 type Constant struct {
@@ -18,34 +24,43 @@ func (k *Constant) Order() int {
 	return 1
 }
 
-func (k *Constant) StateMean(t float64) *mat.VecDense {
-	return mat.NewVecDense(1, []float64{0.0})
+func (k *Constant) StateMean(t float64) blas64.Vector {
+	return blas64.Vector{
+		Inc:  1,
+		Data: []float64{0.0},
+	}
 }
 
-func (k *Constant) StateCov(t float64) *mat.Dense {
-	return mat.NewDense(1, 1, []float64{k.variance})
+func (k *Constant) StateCov(t float64) blas64.Symmetric {
+	return blas64.Symmetric{
+		N:      1,
+		Stride: 1,
+		Data:   []float64{k.variance},
+		Uplo:   blas.Upper,
+	}
 }
 
-func (k *Constant) MeasurementVec() *mat.VecDense {
-	return mat.NewVecDense(1, []float64{1.0})
+func (k *Constant) MeasurementVec() blas64.Vector {
+	return blas64.Vector{
+		Inc:  1,
+		Data: []float64{1.0},
+	}
 }
 
-func (k *Constant) Feedback() *mat.Dense {
-	return mat.NewDense(1, 1, []float64{0.0})
+func (k *Constant) Transition(delta float64) blas64.General {
+	return blas64.General{
+		Rows:   1,
+		Cols:   1,
+		Stride: 1,
+		Data:   []float64{1.0},
+	}
 }
 
-func (k *Constant) NoiseEffect() *mat.Dense {
-	return mat.NewDense(1, 1, []float64{1.0})
-}
-
-func (k *Constant) NoiseDensity() *mat.Dense {
-	return mat.NewDense(1, 1, []float64{0.0})
-}
-
-func (k *Constant) Transition(delta float64) *mat.Dense {
-	return mat.NewDense(1, 1, []float64{1.0})
-}
-
-func (k *Constant) NoiseCov(delta float64) *mat.Dense {
-	return mat.NewDense(1, 1, []float64{0.0})
+func (k *Constant) NoiseCov(delta float64) blas64.Symmetric {
+	return blas64.Symmetric{
+		N:      1,
+		Stride: 1,
+		Data:   []float64{0.0},
+		Uplo:   blas.Upper,
+	}
 }

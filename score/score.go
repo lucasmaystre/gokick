@@ -4,7 +4,9 @@ import (
 	"c4science.ch/source/gokick/kern"
 	"c4science.ch/source/gokick/utils"
 	"errors"
-	"gonum.org/v1/gonum/mat"
+	"gonum.org/v1/gonum/blas"
+	"gonum.org/v1/gonum/blas/blas64"
+	"gonum.org/v1/gonum/lapack/lapack64"
 )
 
 var ErrNotChronological = errors.New("observation not in chronological order")
@@ -38,16 +40,16 @@ type Process struct {
 	Vs     []float64
 	Ns     []float64
 	Xs     []float64
-	_h     *mat.VecDense
-	_I     *mat.Dense
-	_A     []*mat.Dense
-	_Q     []*mat.Dense
-	_m_p   []*mat.VecDense
-	_P_p   []*mat.Dense
-	_m_f   []*mat.VecDense
-	_P_f   []*mat.Dense
-	_m_s   []*mat.VecDense
-	_P_s   []*mat.Dense
+	_h     blas64.Vector
+	_A     []blas64.General
+	_Q     []blas64.Symmetric
+	_m_p   []blas64.Vector
+	_P_p   []blas64.Symmetric
+	_U     []blas64.Triangular
+	_m_f   []blas64.Vector
+	_P_f   []blas64.Symmetric
+	_m_s   []blas64.Vector
+	_P_s   []blas64.Symmetric
 }
 
 func NewProcess(kernel kern.Kernel) *Process {
@@ -59,15 +61,15 @@ func NewProcess(kernel kern.Kernel) *Process {
 		Ns:     make([]float64, 0, 10),
 		Xs:     make([]float64, 0, 10),
 		_h:     kernel.MeasurementVec(),
-		_I:     utils.Eye(kernel.Order()),
-		_A:     make([]*mat.Dense, 0, 10),
-		_Q:     make([]*mat.Dense, 0, 10),
-		_m_p:   make([]*mat.VecDense, 0, 10),
-		_P_p:   make([]*mat.Dense, 0, 10),
-		_m_f:   make([]*mat.VecDense, 0, 10),
-		_P_f:   make([]*mat.Dense, 0, 10),
-		_m_s:   make([]*mat.VecDense, 0, 10),
-		_P_s:   make([]*mat.Dense, 0, 10),
+		_A:     make([]blas64.General, 0, 10),
+		_Q:     make([]blas64.Symmetric, 0, 10),
+		_m_p:   make([]blas64.Vector, 0, 10),
+		_P_p:   make([]blas64.Symmetric, 0, 10),
+		_U:     make([]blas64.Triangular, 0, 10),
+		_m_f:   make([]blas64.Vector, 0, 10),
+		_P_f:   make([]blas64.Symmetric, 0, 10),
+		_m_s:   make([]blas64.Vector, 0, 10),
+		_P_s:   make([]blas64.Symmetric, 0, 10),
 	}
 }
 
@@ -76,21 +78,34 @@ func (p *Process) AddSample(time float64) *Sample {
 	if idx > 0 && time < p.Ts[idx-1] {
 		panic(ErrNotChronological)
 	}
+	m := p.kernel.Order()
 	p.Ts = append(p.Ts, time)
 	p.Ns = append(p.Ns, 0.0)
 	p.Xs = append(p.Xs, 0.0)
 	p._m_p = append(p._m_p, p.kernel.StateMean(time))
 	p._P_p = append(p._P_p, p.kernel.StateCov(time))
+	p._U = append(p._U, blas64.Triangular{
+		N:      m,
+		Stride: m,
+		Data:   make([]float64, m*m),
+		Uplo:   blas.Upper,
+		Diag:   blas.NonUnit,
+	})
 	p._m_f = append(p._m_f, p.kernel.StateMean(time))
 	p._P_f = append(p._P_f, p.kernel.StateCov(time))
 	p._m_s = append(p._m_s, p.kernel.StateMean(time))
 	p._P_s = append(p._P_s, p.kernel.StateCov(time))
+
 	// Initialize mean and variance.
+	//     m = dot(h, state_mean(t))
+	//     v = dot(np.dot(h, state_cov(t)), h)
 	h := p.kernel.MeasurementVec()
-	var tmp mat.VecDense
-	tmp.MulVec(p.kernel.StateCov(time).T(), h)
-	p.Ms = append(p.Ms, mat.Dot(h, p.kernel.StateMean(time)))
-	p.Vs = append(p.Vs, mat.Dot(&tmp, h))
+	tmp := blas64.Vector{Inc: 1, Data: make([]float64, m)}
+	blas64.Symv(1.0, p.kernel.StateCov(time), h, 0.0, tmp)
+	p.Ms = append(p.Ms, blas64.Dot(m, h, p.kernel.StateMean(time)))
+	p.Vs = append(p.Vs, blas64.Dot(m, h, tmp))
+
+	// Compute transition and noise covariance matrices.
 	if idx > 0 {
 		delta := time - p.Ts[idx-1]
 		p._A = append(p._A, p.kernel.Transition(delta))
@@ -110,7 +125,7 @@ func (p *Process) Fit() {
 		ns  = p.Ns
 		xs  = p.Xs
 		h   = p._h
-		I   = p._I
+		U   = p._U
 		A   = p._A
 		Q   = p._Q
 		m_p = p._m_p
@@ -120,51 +135,116 @@ func (p *Process) Fit() {
 		m_s = p._m_s
 		P_s = p._P_s
 	)
-	var k, tmp1 mat.VecDense
-	var Z, G, tmp2 mat.Dense
+	m := p.kernel.Order()
+	var eye = utils.Eye(m)
+	// Temporary variables.
+	var alpha float64
+	vec1 := blas64.Vector{
+		Inc:  1,
+		Data: make([]float64, m),
+	}
+	gen1 := blas64.General{
+		Rows:   m,
+		Cols:   m,
+		Stride: m,
+		Data:   make([]float64, m*m),
+	}
+	sym1 := blas64.Symmetric{
+		N:      m,
+		Stride: m,
+		Data:   make([]float64, m*m),
+		Uplo:   blas.Upper,
+	}
+	G := blas64.General{
+		Rows:   m,
+		Cols:   m,
+		Stride: m,
+		Data:   make([]float64, m*m),
+	}
+	SymAsGen := blas64.General{
+		Rows:   m,
+		Cols:   m,
+		Stride: m,
+		Data:   make([]float64, m*m),
+	}
+	k := blas64.Vector{Inc: 1, Data: make([]float64, m)}
+
 	// Forward pass (Kalman filter).
 	for i := 0; i < len(ts); i++ {
 		if i > 0 {
-			m_p[i].MulVec(A[i-1], m_f[i-1])
-			P_p[i].Product(A[i-1], P_f[i-1], A[i-1].T())
-			P_p[i].Add(P_p[i], Q[i-1])
+			// m_p[i] = dot(A[i-1], m_f[i-1])
+			blas64.Gemv(blas.NoTrans, 1.0, A[i-1], m_f[i-1], 0.0, m_p[i])
+
+			// P_p[i] = dot(dot(A[i-1], P_f[i-1]), A[i-1].T) + Q[i-1]
+			blas64.Symm(blas.Right, 1.0, P_f[i-1], A[i-1], 0.0, gen1)
+			SymAsGen.Data = P_p[i].Data
+			copy(SymAsGen.Data, Q[i-1].Data) // TODO Dangerous, assumes, P_f.Uplo == All.
+			blas64.Gemm(blas.NoTrans, blas.Trans, 1.0, gen1, A[i-1], 1.0, SymAsGen)
 		}
-		// k = np.dot(P_p[i], h) / (1 + xs[i] * np.dot(np.dot(h, P_p[i]), h))
-		tmp1.MulVec(P_p[i].T(), h)
-		k.MulVec(P_p[i], h)
-		k.ScaleVec(1.0/(1+xs[i]*mat.Dot(&tmp1, h)), &k)
-		// m_f[i] = m_p[i] + k * (ns[i] - xs[i] * np.dot(h, m_p[i]))
-		m_f[i].ScaleVec(ns[i]-xs[i]*mat.Dot(h, m_p[i]), &k)
-		m_f[i].AddVec(m_f[i], m_p[i])
-		// Z = I - np.outer(xs[i] * k, h)
-		Z.Outer(xs[i], &k, h)
-		Z.Sub(I, &Z)
-		// P_f[i] = np.dot(np.dot(Z, P_p[i]), Z.T) + xs[i] * np.outer(k, k)
-		tmp2.Outer(xs[i], &k, &k)
-		P_f[i].Product(&Z, P_p[i], Z.T())
-		P_f[i].Add(P_f[i], &tmp2)
+
+		// U[i] = cholesky(P_p[i]) (upper triangular)
+		copy(sym1.Data, P_p[i].Data)
+		lapack64.Potrf(sym1)
+		copy(U[i].Data, sym1.Data)
+
+		// k = dot(P_p[i], h) / (1 + xs[i] * dot(dot(h, P_p[i]), h))
+		blas64.Symv(1.0, P_p[i], h, 0.0, k)
+		alpha = 1.0 / (1.0 + xs[i]*blas64.Dot(m, h, k))
+		blas64.Scal(m, alpha, k)
+
+		// m_f[i] = m_p[i] + k * (ns[i] - xs[i] * dot(h, m_p[i]))
+		blas64.Copy(m, m_p[i], m_f[i])
+		alpha = ns[i] - xs[i]*blas64.Dot(m, h, m_p[i])
+		blas64.Axpy(m, alpha, k, m_f[i])
+
+		// Z = I - xs[i] * np.outer(k, h)
+		copy(gen1.Data, eye.Data)
+		blas64.Ger(-xs[i], k, h, gen1)
+
+		// Z = dot(Z, U[i].T)
+		blas64.Trmm(blas.Right, blas.Trans, 1.0, U[i], gen1)
+
+		// P_f[i] = dot(dot(Z, Z.T) + xs[i] * outer(k, k)
+		blas64.Syrk(blas.NoTrans, 1.0, gen1, 0.0, P_f[i])
+		blas64.Syr(xs[i], k, P_f[i])
 	}
+
 	// Backward pass (RTS smoother).
 	for i := len(ts) - 1; i >= 0; i-- {
 		if i == len(ts)-1 {
-			m_s[i] = m_f[i]
-			P_s[i] = P_f[i]
+			copy(m_s[i].Data, m_f[i].Data)
+			copy(P_s[i].Data, P_f[i].Data)
 		} else {
-			// G = np.linalg.solve(P_p[i+1], np.dot(A[i], P_f[i]))
-			tmp2.Mul(A[i], P_f[i])
-			G.Solve(P_p[i+1], &tmp2)
-			// m_s[i] = m_f[i] + np.dot(G.T, m_s[i+1] - m_p[i+1])
-			tmp1.SubVec(m_s[i+1], m_p[i+1])
-			tmp1.MulVec(G.T(), &tmp1)
-			m_s[i].AddVec(m_f[i], &tmp1)
-			// P_s[i] = P_f[i] + np.dot(np.dot(G.T, P_s[i+1] - P_p[i+1]), G)
-			tmp2.Sub(P_s[i+1], P_p[i+1])
-			tmp2.Product(G.T(), &tmp2, &G)
-			P_s[i].Add(P_f[i], &tmp2)
+			// G = (dot(A[i], P_f[i]) \ U[i+1].T) \ U[i+1]
+			blas64.Symm(blas.Right, 1.0, P_f[i], A[i], 0.0, G)
+			lapack64.Trtrs(blas.Trans, U[i+1], G)
+			lapack64.Trtrs(blas.NoTrans, U[i+1], G)
+
+			// m_s[i] = m_f[i] + dot(G.T, m_s[i+1] - m_p[i+1])
+			blas64.Copy(m, m_s[i+1], vec1)
+			blas64.Axpy(m, -1.0, m_p[i+1], vec1)
+			blas64.Copy(m, m_f[i], m_s[i])
+			blas64.Gemv(blas.Trans, 1.0, G, vec1, 1.0, m_s[i])
+
+			// sym1 = P_s[i+1] - P_p[i+1]
+			for k := 0; k < sym1.N; k++ {
+				for j := k; j < sym1.N; j++ {
+					sym1.Data[k*sym1.Stride+j] = P_s[i+1].Data[k*P_s[i+1].Stride+j] -
+						P_p[i+1].Data[k*P_p[i+1].Stride+j]
+				}
+			}
+
+			// P_s[i] = P_f[i] + dot(G.T, dot(sym1, G))
+			blas64.Symm(blas.Left, 1.0, sym1, G, 0.0, gen1)
+			SymAsGen.Data = P_s[i].Data
+			copy(SymAsGen.Data, P_f[i].Data) // TODO Dangerous, assumes, P_f.Uplo == All.
+			blas64.Gemm(blas.Trans, blas.NoTrans, 1.0, G, gen1, 1.0, SymAsGen)
 		}
-		ms[i] = mat.Dot(h, m_s[i])
-		tmp1.MulVec(P_s[i].T(), h)
-		vs[i] = mat.Dot(&tmp1, h)
+
+		// ms[i] = dot(h, m_s[i]),  vs[i] = dot(np.dot(h, P_s[i]), h)
+		ms[i] = blas64.Dot(m, h, m_s[i])
+		blas64.Symv(1.0, P_s[i], h, 0.0, vec1)
+		vs[i] = blas64.Dot(m, h, vec1)
 	}
 }
 
