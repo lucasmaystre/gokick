@@ -5,7 +5,7 @@ import (
 	"c4science.ch/source/gokick/obs"
 	"c4science.ch/source/gokick/score"
 	"fmt"
-	//"sync"
+	"sync"
 	"math"
 )
 
@@ -20,6 +20,19 @@ type baseModel struct {
 }
 
 func (m *baseModel) Fit(damping float64, nWorkers, maxIter int, verbose bool) {
+	itemChan := make(chan *Item, 100)
+	defer close(itemChan)
+	var wg sync.WaitGroup
+
+	for i := 0; i < nWorkers; i++ {
+		go func() {
+			for item := range itemChan {
+				item.Fit()
+				wg.Done()
+			}
+		}()
+	}
+
 	for i := 0; i < maxIter; i++ {
 		max := 0.0
 		for _, o := range m.observations {
@@ -27,8 +40,10 @@ func (m *baseModel) Fit(damping float64, nWorkers, maxIter int, verbose bool) {
 			max = math.Max(max, math.Abs(diff))
 		}
 		for _, item := range m.items {
-			item.Fit()
+			wg.Add(1)
+			itemChan <- item
 		}
+		wg.Wait()
 		if verbose {
 			fmt.Printf("Iteration %v, max diff: %.8f\n", i+1, max)
 		}
