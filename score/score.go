@@ -7,6 +7,7 @@ import (
 	"gonum.org/v1/gonum/blas"
 	"gonum.org/v1/gonum/blas/blas64"
 	"gonum.org/v1/gonum/lapack/lapack64"
+	"math"
 )
 
 var ErrNotChronological = errors.New("observation not in chronological order")
@@ -265,4 +266,21 @@ func (p *Process) Fit() {
 
 func (p *Process) Predict(ts []float64) (ms, vs []float64) {
 	return
+}
+
+func (p *Process) LogLikelihoodContrib() float64 {
+	contrib := 0.0
+	m := p.kernel.Order()
+	// Temporary variables.
+	tmp := blas64.Vector{Inc: 1, Data: make([]float64, m)}
+	for i := 0; i < len(p.ts); i++ {
+		o := blas64.Dot(m, p.vecH, p.vecsMp[i])
+		// v = dot(dot(h, P_p[i]), h))
+		blas64.Symv(1.0, p.matsPp[i], p.vecH, 0.0, tmp)
+		v := blas64.Dot(m, p.vecH, tmp)
+		n := p.ns[i]
+		x := p.xs[i]
+		contrib += -0.5 * (math.Log(x*v+1.0) + (-n*n*v-2*n*o+x*o*o)/(x*v+1))
+	}
+	return contrib
 }

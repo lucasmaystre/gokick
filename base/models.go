@@ -5,13 +5,14 @@ import (
 	"c4science.ch/source/gokick/obs"
 	"c4science.ch/source/gokick/score"
 	"fmt"
-	"sync"
 	"math"
+	"sync"
 )
 
 type Model interface {
 	// Fit the model.
 	Fit(damping float64, nWorkers, maxIter int, verbose bool) bool
+	LogLikelihood() float64
 }
 
 type baseModel struct {
@@ -75,6 +76,17 @@ func (m *baseModel) AddItem(name string, kernel kern.Kernel) {
 
 func (m *baseModel) Item(name string) *Item {
 	return m.items[name]
+}
+
+func (m *baseModel) LogLikelihood() float64 {
+	ll := 0.0
+	for _, o := range m.observations {
+		ll += o.LogLikelihoodContrib()
+	}
+	for _, item := range m.items {
+		ll += item.LogLikelihoodContrib()
+	}
+	return ll
 }
 
 // Model for comparisons with three possible outcomes: win, loss, tie.
