@@ -48,6 +48,9 @@ func (m *baseModel) Fit(damping float64, nWorkers, maxIter int, verbose bool) {
 		if verbose {
 			fmt.Printf("Iteration %v, max diff: %.8f\n", i+1, max)
 		}
+		if max < 1e-3 {
+			return
+		}
 	}
 }
 
