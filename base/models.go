@@ -116,10 +116,10 @@ func (m *TernaryModel) Observe(winners, losers map[string]float64,
 	time float64, isTie bool) {
 	procs, coeffs := m.processItems(winners, losers)
 	if isTie {
-		o := obs.NewProbitTie(procs, coeffs, time, m.margin)
+		o := obs.NewTie(procs, coeffs, time, m.margin)
 		m.observations = append(m.observations, o)
 	} else {
-		o := obs.NewProbit(procs, coeffs, time, m.margin)
+		o := obs.NewWin(procs, coeffs, time, m.margin)
 		m.observations = append(m.observations, o)
 	}
 }
@@ -127,8 +127,8 @@ func (m *TernaryModel) Observe(winners, losers map[string]float64,
 func (m *TernaryModel) Probabilities(team1, team2 map[string]float64,
 	time float64) (win, draw, loss float64) {
 	procs, coeffs := m.processItems(team1, team2)
-	win = obs.ProbitProbability(procs, coeffs, time, m.margin)
-	draw = obs.ProbitTieProbability(procs, coeffs, time, m.margin)
+	win = obs.WinProbability(procs, coeffs, time, m.margin)
+	draw = obs.TieProbability(procs, coeffs, time, m.margin)
 	loss = 1.0 - win - draw
 	return
 }
@@ -150,6 +150,6 @@ func NewBinaryModel() *BinaryModel {
 func (m *BinaryModel) Observe(winners, losers map[string]float64,
 	time float64) {
 	procs, coeffs := m.processItems(winners, losers)
-	o := obs.NewProbit(procs, coeffs, time, 0.0)
+	o := obs.NewWin(procs, coeffs, time, 0.0)
 	m.observations = append(m.observations, o)
 }
