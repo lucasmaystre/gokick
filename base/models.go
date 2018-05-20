@@ -12,6 +12,7 @@ import (
 type Model interface {
 	// Fit the model.
 	Fit(damping float64, nWorkers, maxIter int, verbose bool) bool
+	// Compute the marginal log-likelihood.
 	LogLikelihood() float64
 }
 
@@ -20,7 +21,8 @@ type baseModel struct {
 	observations []obs.Observation
 }
 
-func (m *baseModel) Fit(damping float64, nWorkers, maxIter int, verbose bool) {
+func (m *baseModel) Fit(damping float64, nWorkers, maxIter int,
+	verbose bool) bool {
 	itemChan := make(chan *Item, 100)
 	defer close(itemChan)
 	var wg sync.WaitGroup
@@ -49,24 +51,26 @@ func (m *baseModel) Fit(damping float64, nWorkers, maxIter int, verbose bool) {
 			fmt.Printf("Iteration %v, max diff: %.8f\n", i+1, max)
 		}
 		if max < 1e-3 {
-			return
+			return true
 		}
 	}
+
+	return false
 }
 
-func (m *baseModel) processItems(winners, losers map[string]float64,
-	time float64) (samples []*score.Sample, coeffs []float64) {
+func (m *baseModel) processItems(winners, losers map[string]float64) (
+	procs []*score.Process, coeffs []float64) {
 	nElems := len(winners) + len(losers)
-	samples = make([]*score.Sample, nElems)
+	procs = make([]*score.Process, nElems)
 	coeffs = make([]float64, nElems)
 	i := 0
 	for name, coeff := range winners {
-		samples[i] = m.items[name].AddSample(time)
+		procs[i] = &m.items[name].Process
 		coeffs[i] = coeff
 		i++
 	}
 	for name, coeff := range losers {
-		samples[i] = m.items[name].AddSample(time)
+		procs[i] = &m.items[name].Process
 		coeffs[i] = -coeff
 		i++
 	}
@@ -110,14 +114,23 @@ func NewTernaryModel(margin float64) *TernaryModel {
 
 func (m *TernaryModel) Observe(winners, losers map[string]float64,
 	time float64, isTie bool) {
-	samples, coeffs := m.processItems(winners, losers, time)
+	procs, coeffs := m.processItems(winners, losers)
 	if isTie {
-		o := obs.NewProbitTie(samples, coeffs, time, m.margin)
+		o := obs.NewProbitTie(procs, coeffs, time, m.margin)
 		m.observations = append(m.observations, o)
 	} else {
-		o := obs.NewProbit(samples, coeffs, time, m.margin)
+		o := obs.NewProbit(procs, coeffs, time, m.margin)
 		m.observations = append(m.observations, o)
 	}
+}
+
+func (m *TernaryModel) Probabilities(team1, team2 map[string]float64,
+	time float64) (win, draw, loss float64) {
+	procs, coeffs := m.processItems(team1, team2)
+	win = obs.ProbitProbability(procs, coeffs, time, m.margin)
+	draw = obs.ProbitTieProbability(procs, coeffs, time, m.margin)
+	loss = 1.0 - win - draw
+	return
 }
 
 // Model for comparisons with two possible outcomes: win and loss.
@@ -136,7 +149,7 @@ func NewBinaryModel() *BinaryModel {
 
 func (m *BinaryModel) Observe(winners, losers map[string]float64,
 	time float64) {
-	samples, coeffs := m.processItems(winners, losers, time)
-	o := obs.NewProbit(samples, coeffs, time, 0.0)
+	procs, coeffs := m.processItems(winners, losers)
+	o := obs.NewProbit(procs, coeffs, time, 0.0)
 	m.observations = append(m.observations, o)
 }

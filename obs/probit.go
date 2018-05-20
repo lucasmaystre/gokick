@@ -74,10 +74,10 @@ func matchMomentsProbitTie(meanCav, varCav, margin float64) (
 	return
 }
 
-func NewProbit(samples []*score.Sample, coeffs []float64,
+func NewProbit(procs []*score.Process, coeffs []float64,
 	time, margin float64) Observation {
 	return &baseObservation{
-		samples: samples,
+		samples: addSamples(procs, time),
 		coeffs:  coeffs,
 		matchMoments: func(m, v float64) (x, y, z float64) {
 			return matchMomentsProbit(m-margin, v)
@@ -85,13 +85,42 @@ func NewProbit(samples []*score.Sample, coeffs []float64,
 	}
 }
 
-func NewProbitTie(samples []*score.Sample, coeffs []float64,
+func NewProbitTie(procs []*score.Process, coeffs []float64,
 	time, margin float64) Observation {
 	return &baseObservation{
-		samples: samples,
+		samples: addSamples(procs, time),
 		coeffs:  coeffs,
 		matchMoments: func(m, v float64) (x, y, z float64) {
 			return matchMomentsProbitTie(m, v, margin)
 		},
 	}
+}
+
+func probability(procs []*score.Process, coeffs []float64, time float64,
+	matchMoments func(m, v float64) (x, y, z float64)) float64 {
+	mTot, vTot := 0.0, 0.0
+	for i, proc := range procs {
+		c := coeffs[i]
+		m, v := proc.Predict(time)
+		mTot += c * m
+		vTot += c * c * v
+	}
+	logpart, _, _ := matchMoments(mTot, vTot)
+	return math.Exp(logpart)
+}
+
+func ProbitProbability(procs []*score.Process, coeffs []float64,
+	time, margin float64) float64 {
+	return probability(procs, coeffs, time,
+		func(m, v float64) (x, y, z float64) {
+			return matchMomentsProbit(m-margin, v)
+		})
+}
+
+func ProbitTieProbability(procs []*score.Process, coeffs []float64,
+	time, margin float64) float64 {
+	return probability(procs, coeffs, time,
+		func(m, v float64) (x, y, z float64) {
+			return matchMomentsProbitTie(m, v, margin)
+		})
 }

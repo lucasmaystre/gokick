@@ -17,6 +17,14 @@ type baseObservation struct {
 	logpart      float64
 }
 
+func addSamples(procs []*score.Process, time float64) []*score.Sample {
+	samples := make([]*score.Sample, len(procs))
+	for i, proc := range procs {
+		samples[i] = proc.AddSample(time)
+	}
+	return samples
+}
+
 func (o *baseObservation) UpdateApprox(damping float64) float64 {
 	// Compute cavity mean and variance in the 1D subspace.
 	meanCav := 0.0
