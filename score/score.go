@@ -267,60 +267,64 @@ func (p *Process) Fit() {
 }
 
 func (p *Process) Predict(t float64) (mean, var_ float64) {
-	if len(p.ts) == 0 {
-		panic(ErrNotImplemented)
-	}
-	nxt := sort.SearchFloat64s(p.ts, t)
-
 	m := p.kernel.Order()
-	// Temporary variables.
+	// Temporary vector.
 	vec := blas64.Vector{
 		Inc:  1,
 		Data: make([]float64, m),
 	}
-	matP := blas64.Symmetric{
-		N:      m,
-		Stride: m,
-		Data:   make([]float64, m*m),
-		Uplo:   blas.Upper,
-	}
-	gen := blas64.General{
-		Rows:   m,
-		Cols:   m,
-		Stride: m,
-		Data:   make([]float64, m*m),
-	}
-	symAsGen := blas64.General{
-		Rows:   m,
-		Cols:   m,
-		Stride: m,
-		Data:   make([]float64, m*m),
-	}
-
-	if nxt == len(p.ts) {
-		// New point is *after* last observation.
-		delta := t - p.ts[nxt-1]
-		matA := p.kernel.Transition(delta)
-		matQ := p.kernel.NoiseCov(delta)
-
-		// m = dot(A, m_f[nxt-1])
-		blas64.Gemv(blas.NoTrans,
-			1.0, matA, p.vecsMf[nxt-1], 0.0, vec)
-
-		// P = dot(dot(A, P_f[nxt-1]), A.T) + Q
-		blas64.Symm(blas.Right, 1.0, p.matsPf[nxt-1], matA, 0.0, gen)
-		symAsGen.Data = matP.Data
-		copy(symAsGen.Data, matQ.Data) // TODO Dangerous, assumes, P_f.Uplo == All.
-		blas64.Gemm(blas.NoTrans, blas.Trans,
-			1.0, gen, matA, 1.0, symAsGen)
-
-		// m = dot(h, m),  v = dot(np.dot(h, P), h)
-		mean = blas64.Dot(m, p.vecH, vec)
-		blas64.Symv(1.0, matP, p.vecH, 0.0, vec)
+	if len(p.ts) == 0 {
+		mean = 0.0
+		blas64.Symv(1.0, p.kernel.StateCov(t), p.vecH, 0.0, vec)
 		var_ = blas64.Dot(m, p.vecH, vec)
 		return
 	} else {
-		panic(ErrNotImplemented)
+		nxt := sort.SearchFloat64s(p.ts, t)
+		// Temporary variables.
+		matP := blas64.Symmetric{
+			N:      m,
+			Stride: m,
+			Data:   make([]float64, m*m),
+			Uplo:   blas.Upper,
+		}
+		gen := blas64.General{
+			Rows:   m,
+			Cols:   m,
+			Stride: m,
+			Data:   make([]float64, m*m),
+		}
+		symAsGen := blas64.General{
+			Rows:   m,
+			Cols:   m,
+			Stride: m,
+			Data:   make([]float64, m*m),
+		}
+
+		if nxt == len(p.ts) {
+			// New point is *after* last observation.
+			delta := t - p.ts[nxt-1]
+			matA := p.kernel.Transition(delta)
+			matQ := p.kernel.NoiseCov(delta)
+
+			// m = dot(A, m_f[nxt-1])
+			blas64.Gemv(blas.NoTrans,
+				1.0, matA, p.vecsMf[nxt-1], 0.0, vec)
+
+			// P = dot(dot(A, P_f[nxt-1]), A.T) + Q
+			blas64.Symm(blas.Right, 1.0, p.matsPf[nxt-1], matA, 0.0, gen)
+			symAsGen.Data = matP.Data
+			copy(symAsGen.Data, matQ.Data) // TODO Dangerous, assumes, P_f.Uplo == All.
+			blas64.Gemm(blas.NoTrans, blas.Trans,
+				1.0, gen, matA, 1.0, symAsGen)
+
+			// m = dot(h, m),  v = dot(np.dot(h, P), h)
+			mean = blas64.Dot(m, p.vecH, vec)
+			blas64.Symv(1.0, matP, p.vecH, 0.0, vec)
+			var_ = blas64.Dot(m, p.vecH, vec)
+			return
+		} else {
+			panic(ErrNotImplemented)
+		}
 	}
 }
 
