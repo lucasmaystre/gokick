@@ -1,8 +1,8 @@
 package obs
 
 import (
-	"c4science.ch/source/gokick/score"
-	"c4science.ch/source/gokick/utils"
+	"github.com/lucasmaystre/gokick/score"
+	"github.com/lucasmaystre/gokick/utils"
 	"math"
 )
 

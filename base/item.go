@@ -1,8 +1,8 @@
 package base
 
 import (
-	"c4science.ch/source/gokick/kern"
-	"c4science.ch/source/gokick/score"
+	"github.com/lucasmaystre/gokick/kern"
+	"github.com/lucasmaystre/gokick/score"
 )
 
 type Item struct {

@@ -1,9 +1,9 @@
 package base
 
 import (
-	"c4science.ch/source/gokick/kern"
-	"c4science.ch/source/gokick/obs"
-	"c4science.ch/source/gokick/score"
+	"github.com/lucasmaystre/gokick/kern"
+	"github.com/lucasmaystre/gokick/obs"
+	"github.com/lucasmaystre/gokick/score"
 	"fmt"
 	"math"
 	"sync"

@@ -1,7 +1,7 @@
 package kern
 
 import (
-	"c4science.ch/source/gokick/utils"
+	"github.com/lucasmaystre/gokick/utils"
 	"gonum.org/v1/gonum/blas/blas64"
 )
 

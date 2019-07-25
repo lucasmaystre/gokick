@@ -1,8 +1,8 @@
 package score
 
 import (
-	"c4science.ch/source/gokick/kern"
-	"c4science.ch/source/gokick/utils"
+	"github.com/lucasmaystre/gokick/kern"
+	"github.com/lucasmaystre/gokick/utils"
 	"errors"
 	"gonum.org/v1/gonum/blas"
 	"gonum.org/v1/gonum/blas/blas64"
